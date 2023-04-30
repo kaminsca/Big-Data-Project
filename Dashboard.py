@@ -8,7 +8,8 @@ from pyspark.sql.functions import *
 import geopandas as gpd
 import plotly.graph_objs as go
 from shapely.geometry import Point, LineString
-
+import zipfile
+from dash.dependencies import Input, Output
 
 
 spark = SparkSession.builder \
@@ -48,7 +49,9 @@ def downloadS3(bucket_name, directory_name):
         # create the file path
         file_path = os.path.join(directory_name, os.path.basename(obj['Key']))
         # download the file
-        s3.download_file(bucket_name, obj['Key'], file_path)
+        if obj['Size'] > 0:
+            # download the file
+            s3.download_file(bucket_name, obj['Key'], file_path)
 
 
 # Read and combine parquet files from a directory into a spark df
@@ -62,8 +65,17 @@ def readParquetDirectoryToSpark(directory):
 
 
 # Download data
-downloadS3('bigdata-incident-project-clark', 'weather_data/year=2020')
-#downloadS3('bigdata-incident-project-clark', 'traffic_data/')
+# print("downloading weather data")
+# downloadS3('bigdata-incident-project-clark', 'weather_data/')
+# print("downloading traffic data")
+# downloadS3('bigdata-incident-project-clark', 'traffic_data/')
+# print("unzipping traffic")
+# if not os.path.exists("traffic_data"):
+#     os.makedirs("traffic_data")
+# traffic = zipfile.ZipFile('traffic.parquet.zip')
+# for file in traffic.namelist():
+#     if file.startswith('traffic.parquet/'):
+#         traffic.extract(file, 'traffic_data')
 #downloadS3('bigdata-incident-project-clark', 'data/')
 
 roads = gpd.read_file('data/USA_Tennessee.geojson')
@@ -107,20 +119,59 @@ fig.update_layout(
 #
 # incidents_plus_traffic = incident_data.join(traffic_data,[incident_data.date == traffic_data.date, incident_data.hour == traffic_data.hour, incident_data.XDSegID == traffic_data.xd_id], 'left').select('*').where('speed > 0')
 
+# create pandas dataframe from spark dataframe
+pandas_df = incidents_plus_traffic.toPandas()
 
+# convert latitude and longitude to geometry column
+pandas_df['geometry'] = gpd.points_from_xy(pandas_df.longitude, pandas_df.latitude)
 
+# create datetime column
+pandas_df['datetime'] = pd.to_datetime(pandas_df.time_utc, unit='ms')
+
+# extract date, hour, and weekday columns
+pandas_df['date'] = pandas_df.datetime.dt.date
+pandas_df['hour'] = pandas_df.datetime.dt.hour
+pandas_df['day_of_week'] = pandas_df.datetime.dt.dayofweek
+
+# set the geometry column as the index
+gdf = gpd.GeoDataFrame(pandas_df, geometry='geometry')
+
+# group by geometry and date to get average response time
+response_times = gdf.groupby(['geometry', 'date']).agg({'response_time_sec': 'mean'}).reset_index()
 
 app = Dash(__name__)
 
-
-print("Creating layout")
+# create layout
 app.layout = html.Div([
     html.Div(children='Roads:'),
     dcc.Graph(
         id='my-graph',
-        figure= fig
+        figure = fig
+    ),
+    html.H1(children='Response Time by Location'),
+    dcc.Graph(id='map-graph'),
+    dcc.Slider(
+        id='date-slider',
+        min=response_times['date'].min().strftime('%Y-%m-%d'),
+        max=response_times['date'].max().strftime('%Y-%m-%d'),
+        value=response_times['date'].max().strftime('%Y-%m-%d'),
+        marks={date.strftime('%Y-%m-%d'): date.strftime('%Y-%m-%d') for date in response_times['date'].unique()},
+        step=None
     )
 ])
+
+# create callback to update map
+@app.callback(
+    Output('map-graph', 'figure'),
+    Input('date-slider', 'value')
+)
+def update_map(selected_date):
+    filtered_df = response_times[response_times['date'] == selected_date]
+    new_fig = px.scatter_mapbox(filtered_df, lat='geometry.latitude', lon='geometry.longitude', color='response_time_sec',
+                            hover_data={'geometry.latitude': False, 'geometry.longitude': False, 'response_time_sec': ':.2f'},
+                            zoom=10, height=600)
+    new_fig.update_layout(mapbox_style='open-street-map')
+    return new_fig
 
 if __name__ == '__main__':
     print("Starting app server")
