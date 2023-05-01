@@ -1,2 +1,2 @@
-# Big-Data-Project
-Analysis of Emergency Response: combining weather and traffic accident data to see effects on affect emergency response time
+# Big-Data-Project: Clark Kaminsky and Logan Curd
+Analysis of Emergency Response: combining weather and Nashville incident data to see effects on emergency response time
