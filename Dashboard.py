@@ -178,6 +178,7 @@ app = Dash(__name__)
 # create layout
 app.layout = html.Div([
     html.H1(children='Response Time'),
+    html.H3(id='date-display'),
     dcc.Graph(
         id='response-time-by-date'
     ),
@@ -190,9 +191,6 @@ app.layout = html.Div([
         marks=marks,
     ),
     html.H1(children='Weather'),
-    dcc.Graph(
-        id='weather-plot'
-    ),
     dcc.Dropdown(
         id='weather-dropdown',
         options=[
@@ -210,16 +208,22 @@ app.layout = html.Div([
             {'label': 'Snow', 'value': 'Snow'},
         ],
         value='Clear Sky'
-    )
+    ),
+    dcc.Graph(
+        id='weather-plot'
+    ),
 ])
 
 # Incidents through time callback
 @app.callback(
     Output('response-time-by-date', 'figure'),
+    Output('date-display', 'children'),
     [Input('date-slider', 'value')]
 )
 def update_figure(selected_date):
     print("selected date: {}".format(selected_date))
+    as_date = datetime.fromtimestamp(selected_date).strftime('%Y-%m-%d')
+    print("date: {}".format(as_date))
     # Convert the 'date' column of the merged_gdf dataframe to datetime objects
     merged_gdf['datetime'] = merged_gdf['date'].apply(lambda x: int(datetime.combine(x, datetime.min.time()).timestamp()))
 
@@ -252,7 +256,7 @@ def update_figure(selected_date):
         marker=dict(
             size=valid_sizes,
             color=filtered_df['avg(response_time_sec)'],
-            colorscale='Viridis', # set the colorscale for the markers
+            colorscale='rainbow', # set the colorscale for the markers
             colorbar=dict(title='Average Response Time (sec)'),
             sizemode='diameter', # set the sizemode to adjust the diameter of markers
             sizemin=size_min, # set the minimum size of markers
@@ -269,7 +273,7 @@ def update_figure(selected_date):
         )
     )
 
-    return fig
+    return fig, as_date
 
 @app.callback(
     Output('weather-plot', 'figure'),
@@ -298,8 +302,8 @@ def update_weather_plot(selected_weather):
         mode='markers',
         marker=dict(
             size=valid_sizes,
-            color=filtered_df['avg(response_time_sec)'],
-            colorscale='Viridis',  # set the colorscale for the markers
+            color=filtered_df   ['avg(response_time_sec)'],
+            colorscale='rainbow',  # set the colorscale for the markers
             colorbar=dict(title='Average Response Time (sec)'),
             sizemode='diameter',  # set the sizemode to adjust the diameter of markers
             sizemin=size_min,  # set the minimum size of markers
