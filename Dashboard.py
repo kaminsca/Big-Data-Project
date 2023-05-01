@@ -101,18 +101,14 @@ weather_data = readParquetDirectoryToSpark("weather_data")\
 # traffic_data = traffic_data.groupBy(['date', 'hour']).agg({"congestion": "avg"})
 
 
+"""Setting Up Interactive Incidents Plot"""
+
 print("data loaded, joining incidents and weather")
 incidents_plus_weather = incident_data.join(weather_data, ['date', 'hour'], 'left')\
     .groupBy(['XDSegID', 'date']).agg({'response_time_sec': 'avg'})
 # create pandas dataframe from spark dataframe
 pandas_incidents_weather = incidents_plus_weather.toPandas()
 #print(pandas_incidents_weather[pandas_incidents_weather['XDSegID'] == 136894283])
-# Unique weather:
-# ['Scattered clouds' 'Few clouds' 'Broken clouds' 'Overcast clouds'
-#  'Light rain' 'Clear Sky' 'Moderate rain' 'Heavy rain' 'Mix snow/rain'
-#  'Light snow' 'Snow' 'Heavy snow']
-#print(pandas_df['description'].unique())
-
 
 roads = roads[roads.County == 'DAVIDSON']
 # Create a new GeoDataFrame with a single Point geometry for each row in the original 'roads' dataframe
@@ -160,6 +156,22 @@ date_range = [int(datetime.combine(min_date, datetime.min.time()).timestamp()),
               int(datetime.combine(max_date, datetime.min.time()).timestamp())]
 
 
+"""Setting Up Interactive Weather Plot"""
+
+weather_data_final = incident_data.join(weather_data, ['date', 'hour'], 'left')\
+    .groupBy(['XDSegID', 'description']).agg({'response_time_sec': 'avg'})
+pd_weather = weather_data_final.toPandas()
+print("weather: ")
+print(pd_weather)
+# Unique weather:
+# ['Scattered clouds' 'Few clouds' 'Broken clouds' 'Overcast clouds'
+#  'Light rain' 'Clear Sky' 'Moderate rain' 'Heavy rain' 'Mix snow/rain'
+#  'Light snow' 'Snow' 'Heavy snow']
+
+# merge roads and weather data
+weather_gdf = points_gdf.merge(pd_weather, on='XDSegID')
+
+
 # Start Dash app
 app = Dash(__name__)
 
@@ -176,10 +188,32 @@ app.layout = html.Div([
         step=86400, # Number of seconds in a day
         value=selected_date.timestamp(),
         marks=marks,
+    ),
+    html.H1(children='Weather'),
+    dcc.Graph(
+        id='weather-plot'
+    ),
+    dcc.Dropdown(
+        id='weather-dropdown',
+        options=[
+            {'label': 'Scattered clouds', 'value': 'Scattered clouds'},
+            {'label': 'Few clouds', 'value': 'Few clouds'},
+            {'label': 'Broken clouds', 'value': 'Broken clouds'},
+            {'label': 'Overcast clouds', 'value': 'Overcast clouds'},
+            {'label': 'Light rain', 'value': 'Light rain'},
+            {'label': 'Moderate rain', 'value': 'Moderate rain'},
+            {'label': 'Heavy rain', 'value': 'Heavy rain'},
+            {'label': 'Clear Sky', 'value': 'Clear Sky'},
+            {'label': 'Mix snow/rain', 'value': 'Mix snow/rain'},
+            {'label': 'Light snow', 'value': 'Light snow'},
+            {'label': 'Heavy snow', 'value': 'Heavy snow'},
+            {'label': 'Snow', 'value': 'Snow'},
+        ],
+        value='Clear Sky'
     )
 ])
 
-# create callback function
+# Incidents through time callback
 @app.callback(
     Output('response-time-by-date', 'figure'),
     [Input('date-slider', 'value')]
@@ -236,6 +270,54 @@ def update_figure(selected_date):
     )
 
     return fig
+
+@app.callback(
+    Output('weather-plot', 'figure'),
+    [Input('weather-dropdown', 'value')]
+)
+def update_weather_plot(selected_weather):
+    print("selected weather: {}".format(selected_weather))
+    filtered_df = weather_gdf[weather_gdf['description'] == selected_weather]
+
+    # Define the range of sizes you want to map the values to
+    size_min = 2
+    size_max = 10
+    # Compute the minimum and maximum values of the 'avg(response_time_sec)' column
+    min_time = filtered_df['avg(response_time_sec)'].min()
+    max_time = filtered_df['avg(response_time_sec)'].max()
+    # Compute the scaled values: https://stats.stackexchange.com/questions/281162/scale-a-number-between-a-range
+    scaled_sizes = (filtered_df['avg(response_time_sec)'] - min_time) / (max_time - min_time) * (
+                size_max - size_min) + size_min
+    # Filter out negative and NaN values from scaled_sizes
+    valid_sizes = scaled_sizes.apply(lambda x: x if x > 0 and not np.isnan(x) else 0)
+
+    # Convert GeoPandas plot to Plotly figure
+    fig = go.Figure(go.Scattermapbox(
+        lat=filtered_df.geometry.y,
+        lon=filtered_df.geometry.x,
+        mode='markers',
+        marker=dict(
+            size=valid_sizes,
+            color=filtered_df['avg(response_time_sec)'],
+            colorscale='Viridis',  # set the colorscale for the markers
+            colorbar=dict(title='Average Response Time (sec)'),
+            sizemode='diameter',  # set the sizemode to adjust the diameter of markers
+            sizemin=size_min,  # set the minimum size of markers
+            opacity=0.7  # set the opacity of markers
+        ),
+        text=filtered_df['avg(response_time_sec)']  # display the "avg response time" value as text on the map
+    ))
+
+    fig.update_layout(
+        mapbox=dict(
+            style='open-street-map',
+            center=dict(lat=filtered_df.geometry.y.mean(), lon=filtered_df.geometry.x.mean()),
+            zoom=10,
+        )
+    )
+
+    return fig
+
 
 if __name__ == '__main__':
     print("Starting app server")
