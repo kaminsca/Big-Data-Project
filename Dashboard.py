@@ -7,6 +7,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 import geopandas as gpd
 import plotly.graph_objs as go
+from shapely import MultiPoint
 from shapely.geometry import Point, LineString
 import zipfile
 from dash.dependencies import Input, Output
@@ -114,39 +115,68 @@ pandas_incidents_weather = incidents_plus_weather.toPandas()
 
 
 roads = roads[roads.County == 'DAVIDSON']
+# Create a new GeoDataFrame with a single Point geometry for each row in the original 'roads' dataframe
+points_gdf = gpd.GeoDataFrame(roads.assign(geometry=roads.geometry.apply(lambda g: MultiPoint([Point(x, y) for x, y in g.coords]))),
+                              geometry='geometry', crs=roads.crs)
+
+# Explode the Point geometries into separate rows
+points_gdf = points_gdf.explode('geometry')
+
+# Reset the index
+points_gdf = points_gdf.reset_index(drop=True)
 # Convert LineString/MultiLineString to Point geometries
-points = []
-for geometry in roads.geometry:
-    if geometry.geom_type == 'LineString':
-        points.extend(Point(x, y) for x, y in geometry.coords)
-    elif geometry.geom_type == 'MultiLineString':
-        for line in geometry:
-            points.extend(Point(x, y) for x, y in line.coords)
+# points = []
+# for geometry in roads.geometry:
+#     if geometry.geom_type == 'LineString':
+#         points.extend(Point(x, y) for x, y in geometry.coords)
+#     elif geometry.geom_type == 'MultiLineString':
+#         for line in geometry:
+#             points.extend(Point(x, y) for x, y in line.coords)
 
 # Create GeoDataFrame of Point geometries
-points_gdf = gpd.GeoDataFrame(geometry=points, crs=roads.crs)
+# points_gdf = gpd.GeoDataFrame(roads, geometry=points, crs=roads.crs)
 
 pandas_incidents_weather.info()
 points_gdf.info()
-# merged_gdf = points_gdf.merge(pandas_incidents_weather, on='XDSegID')
-#
-# # Convert GeoPandas plot to Plotly figure
-# fig = go.Figure(go.Scattermapbox(
-#     lat=merged_gdf.geometry.y,
-#     lon=merged_gdf.geometry.x,
-#     mode='markers',
-#     marker=dict(size=2, color='black'),
-# ))
-#
-# fig.update_layout(
-#     mapbox=dict(
-#         style='open-street-map',
-#         center=dict(lat=merged_gdf.geometry.y.mean(), lon=merged_gdf.geometry.x.mean()),
-#         zoom=10,
-#     )
-# )
-#
-#
+merged_gdf = points_gdf.merge(pandas_incidents_weather, on='XDSegID')
+merged_gdf.info()
+
+# Define the range of sizes you want to map the values to
+size_min = 2
+size_max = 10
+# Compute the minimum and maximum values of the 'avg(response_time_sec)' column
+min_time = merged_gdf['avg(response_time_sec)'].min()
+max_time = merged_gdf['avg(response_time_sec)'].max()
+# Compute the scaled values: https://stats.stackexchange.com/questions/281162/scale-a-number-between-a-range
+scaled_sizes = (merged_gdf['avg(response_time_sec)'] - min_time) / (max_time - min_time) * (size_max - size_min) + size_min
+# Filter out negative and NaN values from scaled_sizes
+valid_sizes = scaled_sizes.apply(lambda x: x if x > 0 and not np.isnan(x) else 0)
+
+
+# Convert GeoPandas plot to Plotly figure
+fig = go.Figure(go.Scattermapbox(
+    lat=merged_gdf.geometry.y,
+    lon=merged_gdf.geometry.x,
+    mode='markers',
+    marker=dict(
+        size=valid_sizes,
+        color=merged_gdf['avg(response_time_sec)'],
+        colorscale='Viridis', # set the colorscale for the markers
+        colorbar=dict(title='Average Response Time (sec)'),
+        sizemode='diameter', # set the sizemode to adjust the diameter of markers
+        sizemin=size_min, # set the minimum size of markers
+        opacity=0.7 # set the opacity of markers
+    ),
+))
+
+fig.update_layout(
+    mapbox=dict(
+        style='open-street-map',
+        center=dict(lat=merged_gdf.geometry.y.mean(), lon=merged_gdf.geometry.x.mean()),
+        zoom=10,
+    )
+)
+
 # # convert latitude and longitude to geometry column
 # # pandas_df['geometry'] = gpd.points_from_xy(pandas_df.longitude, pandas_df.latitude)
 #
@@ -155,41 +185,41 @@ points_gdf.info()
 #
 # # group by geometry and date to get average response time
 # #response_times = gdf.groupby(['date']).agg({'response_time_sec': 'mean'}).reset_index()
+
+app = Dash(__name__)
+
+# create layout
+app.layout = html.Div([
+    html.H1(children='Response Time'),
+    dcc.Graph(
+        id='my-graph',
+        figure = fig
+    ),
+    # html.H1(children='Response Time by Location'),
+    # dcc.Graph(id='map-graph'),
+    # dcc.Slider(
+    #     id='date-slider',
+    #     min=response_times['date'].min().strftime('%Y-%m-%d'),
+    #     max=response_times['date'].max().strftime('%Y-%m-%d'),
+    #     value=response_times['date'].max().strftime('%Y-%m-%d'),
+    #     marks={date.strftime('%Y-%m-%d'): date.strftime('%Y-%m-%d') for date in response_times['date'].unique()},
+    #     step=None
+    # )
+])
+
+# create callback to update map
+# @app.callback(
+#     Output('map-graph', 'figure'),
+#     Input('date-slider', 'value')
+# )
+# def update_map(selected_date):
+#     filtered_df = response_times[response_times['date'] == selected_date]
+#     new_fig = px.scatter_mapbox(filtered_df, lat='geometry.latitude', lon='geometry.longitude', color='response_time_sec',
+#                             hover_data={'geometry.latitude': False, 'geometry.longitude': False, 'response_time_sec': ':.2f'},
+#                             zoom=10, height=600)
+#     new_fig.update_layout(mapbox_style='open-street-map')
+#     return new_fig
 #
-# app = Dash(__name__)
-#
-# # create layout
-# app.layout = html.Div([
-#     html.H1(children='Response Time'),
-#     dcc.Graph(
-#         id='my-graph',
-#         figure = fig
-#     ),
-#     # html.H1(children='Response Time by Location'),
-#     # dcc.Graph(id='map-graph'),
-#     # dcc.Slider(
-#     #     id='date-slider',
-#     #     min=response_times['date'].min().strftime('%Y-%m-%d'),
-#     #     max=response_times['date'].max().strftime('%Y-%m-%d'),
-#     #     value=response_times['date'].max().strftime('%Y-%m-%d'),
-#     #     marks={date.strftime('%Y-%m-%d'): date.strftime('%Y-%m-%d') for date in response_times['date'].unique()},
-#     #     step=None
-#     # )
-# ])
-#
-# # create callback to update map
-# # @app.callback(
-# #     Output('map-graph', 'figure'),
-# #     Input('date-slider', 'value')
-# # )
-# # def update_map(selected_date):
-# #     filtered_df = response_times[response_times['date'] == selected_date]
-# #     new_fig = px.scatter_mapbox(filtered_df, lat='geometry.latitude', lon='geometry.longitude', color='response_time_sec',
-# #                             hover_data={'geometry.latitude': False, 'geometry.longitude': False, 'response_time_sec': ':.2f'},
-# #                             zoom=10, height=600)
-# #     new_fig.update_layout(mapbox_style='open-street-map')
-# #     return new_fig
-# #
-# if __name__ == '__main__':
-#     print("Starting app server")
-#     app.run_server(debug=True)
+if __name__ == '__main__':
+    print("Starting app server")
+    app.run_server()
