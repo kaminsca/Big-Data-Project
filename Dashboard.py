@@ -78,7 +78,7 @@ def readParquetDirectoryToSpark(directory):
 #downloadS3('bigdata-incident-project-clark', 'data/')
 # print("done downloading")
 
-
+pd.set_option('display.max_columns', None)
 spark = SparkSession.builder \
     .master("local[*]") \
     .appName("Learning_Spark") \
@@ -102,11 +102,11 @@ weather_data = readParquetDirectoryToSpark("weather_data")\
 
 
 print("data loaded, joining incidents and weather")
-incidents_plus_weather = incident_data.join(weather_data, ['date', 'hour'], 'left').select('*').where('precip >= 0')\
+incidents_plus_weather = incident_data.join(weather_data, ['date', 'hour'], 'left')\
     .groupBy(['XDSegID', 'date']).agg({'response_time_sec': 'avg'})
 # create pandas dataframe from spark dataframe
 pandas_incidents_weather = incidents_plus_weather.toPandas()
-# pandas_df.head(20)
+#print(pandas_incidents_weather[pandas_incidents_weather['XDSegID'] == 136894283])
 # Unique weather:
 # ['Scattered clouds' 'Few clouds' 'Broken clouds' 'Overcast clouds'
 #  'Light rain' 'Clear Sky' 'Moderate rain' 'Heavy rain' 'Mix snow/rain'
@@ -185,15 +185,18 @@ app.layout = html.Div([
     [Input('date-slider', 'value')]
 )
 def update_figure(selected_date):
-    print(selected_date)
+    print("selected date: {}".format(selected_date))
     # Convert the 'date' column of the merged_gdf dataframe to datetime objects
     merged_gdf['datetime'] = merged_gdf['date'].apply(lambda x: int(datetime.combine(x, datetime.min.time()).timestamp()))
 
     # Calculate the start and end dates of the time window
-    start_date = selected_date - 86400 * 5 # 86,400 seconds in a day -- 5 days
-    end_date = selected_date + 86400 * 5
+    days_window = 10
+    start_date = selected_date - 86400 * days_window # 86,400 seconds in a day
+    end_date = selected_date + 86400 * days_window
+    print("start date: {}".format(start_date))
+    print("end date: {}".format(end_date))
     # Filter the merged_gdf dataframe based on the time window
-    filtered_df = merged_gdf[(merged_gdf['datetime'] >= start_date & (merged_gdf['datetime'] <= end_date))]
+    filtered_df = merged_gdf[(merged_gdf['datetime'] >= start_date) & (merged_gdf['datetime'] <= end_date)]
     print(filtered_df)
 
     # Define the range of sizes you want to map the values to
@@ -221,6 +224,7 @@ def update_figure(selected_date):
             sizemin=size_min, # set the minimum size of markers
             opacity=0.7 # set the opacity of markers
         ),
+        text=filtered_df['avg(response_time_sec)']  # display the "avg response time" value as text on the map
     ))
 
     fig.update_layout(
