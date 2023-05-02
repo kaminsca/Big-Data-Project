@@ -14,10 +14,7 @@ from dash.dependencies import Input, Output
 from datetime import datetime
 import datetime as dt
 
-
-
-
-
+"""Uncomment if you need to download data from s3"""
 # Setup S3
 # aws_access_key_id = input("Enter aws access key id:\n");
 # aws_secret_access_key = input("Enter aws secret access key:\n");
@@ -63,7 +60,6 @@ def readParquetDirectoryToSpark(directory):
     return spark.read.parquet(*file_path_list)
 
 """Uncomment this section to download data from S3"""
-# Download data
 # print("downloading weather data")
 # downloadS3('bigdata-incident-project-clark', 'weather_data/')
 # print("downloading traffic data")
@@ -121,18 +117,6 @@ points_gdf = points_gdf.explode('geometry')
 # Reset the index
 points_gdf = points_gdf.reset_index(drop=True)
 
-# Convert LineString/MultiLineString to Point geometries
-# points = []
-# for geometry in roads.geometry:
-#     if geometry.geom_type == 'LineString':
-#         points.extend(Point(x, y) for x, y in geometry.coords)
-#     elif geometry.geom_type == 'MultiLineString':
-#         for line in geometry:
-#             points.extend(Point(x, y) for x, y in line.coords)
-
-# Create GeoDataFrame of Point geometries
-# points_gdf = gpd.GeoDataFrame(roads, geometry=points, crs=roads.crs)
-
 # merge spatial and incidents/weather data
 merged_gdf = points_gdf.merge(pandas_incidents_weather, on='XDSegID')
 print("merged dataframe info:")
@@ -170,7 +154,6 @@ print(pd_weather)
 
 # merge roads and weather data
 weather_gdf = points_gdf.merge(pd_weather, on='XDSegID')
-
 
 # Start Dash app
 app = Dash(__name__)
@@ -221,7 +204,6 @@ app.layout = html.Div([
     [Input('date-slider', 'value')]
 )
 def update_figure(selected_date):
-    print("selected date: {}".format(selected_date))
     as_date = datetime.fromtimestamp(selected_date).strftime('%Y-%m-%d')
     print("date: {}".format(as_date))
     # Convert the 'date' column of the merged_gdf dataframe to datetime objects
@@ -231,8 +213,6 @@ def update_figure(selected_date):
     days_window = 10
     start_date = selected_date - 86400 * days_window # 86,400 seconds in a day
     end_date = selected_date + 86400 * days_window
-    print("start date: {}".format(start_date))
-    print("end date: {}".format(end_date))
     # Filter the merged_gdf dataframe based on the time window
     filtered_df = merged_gdf[(merged_gdf['datetime'] >= start_date) & (merged_gdf['datetime'] <= end_date)]
     print(filtered_df)
